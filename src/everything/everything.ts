@@ -86,23 +86,28 @@ const ModelPreferencesSchema = z.object({
     .describe("Priority for model capabilities (0-1)")
 }).optional();
 
-const SampleLLMSchema = z.object({
-  messages: z.array(SamplingMessageSchema)
-    .describe("Array of messages to send to the LLM"),
-  maxTokens: z.number()
-    .describe("Maximum number of tokens to generate"),
-  modelPreferences: ModelPreferencesSchema,
-  systemPrompt: z.string().optional()
-    .describe("Optional system prompt override"),
-  includeContext: z.enum(["none", "thisServer", "allServers"]).optional()
-    .describe("Whether to include MCP server context"),
-  temperature: z.number().optional()
-    .describe("Controls randomness in the output"),
-  stopSequences: z.array(z.string()).optional()
-    .describe("List of sequences that will stop generation"),
-  metadata: z.record(z.unknown()).optional()
-    .describe("Optional provider-specific metadata")
-});
+const SampleLLMSchema = z
+  .object({
+    prompt: z.string().optional().describe("Optional simple prompt for a single user message"),
+    messages: z
+      .array(SamplingMessageSchema)
+      .optional()
+      .describe("Array of messages to send to the LLM"),
+    maxTokens: z.number().default(100).describe("Maximum number of tokens to generate"),
+    modelPreferences: ModelPreferencesSchema.optional(),
+    systemPrompt: z.string().optional().describe("Optional system prompt override"),
+    includeContext: z
+      .enum(["none", "thisServer", "allServers"])
+      .optional()
+      .describe("Whether to include MCP server context"),
+    temperature: z.number().optional().describe("Controls randomness in the output"),
+    stopSequences: z.array(z.string()).optional().describe("List of sequences that will stop generation"),
+    metadata: z.record(z.unknown()).optional().describe("Optional provider-specific metadata"),
+  })
+  .refine(
+    (data) => data.prompt || data.messages,
+    { message: "Either prompt or messages must be provided" }
+  );
 
 // Example completion values
 const EXAMPLE_COMPLETIONS = {
@@ -469,25 +474,36 @@ export const createServer = () => {
 
     if (name === ToolName.SAMPLE_LLM) {
       const validatedArgs = SampleLLMSchema.parse(args);
-      const { messages, maxTokens, systemPrompt, modelPreferences, temperature, stopSequences, includeContext, metadata } = validatedArgs;
-
-      const request = {
+      
+      // If a simple prompt was provided, wrap it as a single user message.
+      const messages = validatedArgs.prompt
+        ? [
+            {
+              role: "user",
+              content: {
+                type: "text",
+                text: validatedArgs.prompt,
+              },
+            },
+          ]
+        : validatedArgs.messages!;
+      
+      const samplingRequest = {
         method: "sampling/createMessage",
         params: {
           messages,
-          maxTokens,
-          ...(systemPrompt && { systemPrompt }),
-          ...(modelPreferences && { modelPreferences }),
-          ...(temperature !== undefined && { temperature }),
-          ...(stopSequences?.length && { stopSequences }),
-          ...(includeContext && { includeContext }),
-          ...(metadata && { metadata })
+          maxTokens: validatedArgs.maxTokens,
+          ...(validatedArgs.systemPrompt && { systemPrompt: validatedArgs.systemPrompt }),
+          ...(validatedArgs.modelPreferences && { modelPreferences: validatedArgs.modelPreferences }),
+          ...(validatedArgs.temperature !== undefined && { temperature: validatedArgs.temperature }),
+          ...(validatedArgs.stopSequences && { stopSequences: validatedArgs.stopSequences }),
+          ...(validatedArgs.includeContext && { includeContext: validatedArgs.includeContext }),
+          ...(validatedArgs.metadata && { metadata: validatedArgs.metadata }),
         },
       };
-
-      const result = await server.request(request, CreateMessageResultSchema);
-      
-      // Return in proper format with model name and stop reason
+    
+      const result = await server.request(samplingRequest, CreateMessageResultSchema);
+    
       return {
         content: [
           {
@@ -496,13 +512,13 @@ export const createServer = () => {
           },
           result.content,
           ...(result.stopReason ? [{
-            type: "text",
+                  type: "text",
             text: `Stop reason: ${result.stopReason}`
           }] : [])
         ],
       };
     }
-
+    
     if (name === ToolName.GET_TINY_IMAGE) {
       GetTinyImageSchema.parse(args);
       return {
