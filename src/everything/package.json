@@ -6,6 +6,9 @@
   "author": "Dandelion Gold, LLC (forked from original package by Anthropic, PBC)",
   "homepage": "https://dandeliongold.com",
   "bugs": "https://github.com/dandeliongold/servers/issues",
+  "publishConfig": {
+  "access": "public"
+  },
   "type": "module",
   "bin": {
     "mcp-server-everything": "dist/index.js"
