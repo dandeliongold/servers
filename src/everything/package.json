@@ -1,9 +1,9 @@
 {
   "name": "@dandeliongold/server-everything",
   "version": "0.7.0",
-  "description": "Demo MCP server that exercises all the features of the MCP protocol",
+  "description": "Demo MCP server that exercises all the features of the MCP protocol. This server is a fork of @modelcontextprotocol/servers by Anthropic, PBC with extended functionality for testing MCP clients.",
   "license": "MIT",
-  "author": "Dandelion Gold, LLC (original server-everything by Anthropic, PBC)",
+  "author": "Dandelion Gold, LLC (forked from original package by Anthropic, PBC)",
   "homepage": "https://dandeliongold.com",
   "bugs": "https://github.com/dandeliongold/servers/issues",
   "type": "module",
