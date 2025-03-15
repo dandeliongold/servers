@@ -19,6 +19,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { promises as fs } from 'fs';
 
 const ToolInputSchema = ToolSchema.shape.inputSchema;
 type ToolInput = z.infer<typeof ToolInputSchema>;
@@ -118,11 +119,23 @@ const EXAMPLE_COMPLETIONS = {
 
 const GetTinyImageSchema = z.object({});
 
+const GetLargeImageSchema = z.object({
+  format: z.enum(["jpg"]).default("jpg")
+    .describe("Image format to return")
+});
+
 const AnnotatedMessageSchema = z.object({
   messageType: z.enum(["error", "success", "debug"])
     .describe("Type of message to demonstrate different annotation patterns"),
   includeImage: z.boolean().default(false)
     .describe("Whether to include an example image")
+});
+
+const HyperlinkSchema = z.object({
+  url: z.string().describe("URL to link to"),
+  text: z.string().describe("Display text for the link").optional(),
+  format: z.enum(["markdown", "html"]).default("markdown")
+    .describe("Format to return the link in")
 });
 
 enum ToolName {
@@ -133,6 +146,8 @@ enum ToolName {
   SAMPLE_LLM = "sampleLLM",
   GET_TINY_IMAGE = "getTinyImage",
   ANNOTATED_MESSAGE = "annotatedMessage",
+  HYPERLINK = "hyperlink",
+  GET_LARGE_IMAGE = "getLargeImage",
 }
 
 enum PromptName {
@@ -400,6 +415,16 @@ export const createServer = () => {
         description: "Demonstrates how annotations can be used to provide metadata about content",
         inputSchema: zodToJsonSchema(AnnotatedMessageSchema) as ToolInput,
       },
+      {
+        name: ToolName.HYPERLINK,
+        description: "Returns clickable links in both markdown and HTML formats",
+        inputSchema: zodToJsonSchema(HyperlinkSchema) as ToolInput,
+      },
+      {
+        name: ToolName.GET_LARGE_IMAGE,
+        description: "Returns a large image (>1MB) to test payload handling",
+        inputSchema: zodToJsonSchema(GetLargeImageSchema) as ToolInput,
+      },
     ];
 
     return { tools };
@@ -589,6 +614,73 @@ export const createServer = () => {
       }
 
       return { content };
+    }
+
+    if (name === ToolName.HYPERLINK) {
+      const { url, text, format } = HyperlinkSchema.parse(args);
+      const displayText = text || url;
+      
+      if (format === "markdown") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `[${displayText}](${url})`,
+              annotations: {
+                format: "markdown"
+              }
+            }
+          ]
+        };
+      } else {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `<a href="${url}">${displayText}</a>`,
+              annotations: {
+                format: "html"
+              }
+            }
+          ]
+        };
+      }
+    }
+
+    if (name === ToolName.GET_LARGE_IMAGE) {
+      GetLargeImageSchema.parse(args);
+      
+      // Read file in 500KB chunks
+      const fileHandle = await fs.open('C:/Users/johnn/OneDrive/Documents/GitHub/servers/src/everything/tapir_base64.txt', 'r');
+      const chunks = [];
+      const buffer = Buffer.alloc(512 * 1024); // 500KB chunks (512 * 1024 bytes)
+      
+      let readResult;
+      while ((readResult = await fileHandle.read(buffer, 0, buffer.length)) && readResult.bytesRead > 0) {
+        chunks.push(buffer.slice(0, readResult.bytesRead));
+      }
+      
+      await fileHandle.close();
+      const base64Data = Buffer.concat(chunks).toString('utf8');
+      const size = Buffer.from(base64Data, 'base64').length;
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: "Here is a large image (tapir.jpg):",
+          },
+          {
+            type: "image",
+            data: base64Data,
+            mimeType: "image/jpeg",
+            annotations: {
+              size: size,
+              filename: "tapir.jpg"
+            }
+          }
+        ]
+      };
     }
 
     throw new Error(`Unknown tool: ${name}`);
