@@ -2,6 +2,135 @@
 
 A Model Context Protocol server that provides read-only access to PostgreSQL databases. This server enables LLMs to inspect database schemas and execute read-only queries.
 
+## Prerequisites
+
+### Installing PostgreSQL
+
+#### Windows
+1. Download the installer from [PostgreSQL Downloads](https://www.postgresql.org/download/windows/)
+2. Run the installer and follow the setup wizard:
+   - Choose installation directory
+   - Select components (all recommended)
+   - Set password for database superuser (postgres)
+   - Set port (default: 5432)
+   - Choose locale
+
+How to interact directly with PostgreSQL on Windows:
+- Use Command Prompt/PowerShell with `psql`
+- Admin UI is called pgAdmin (included in installation)
+
+#### macOS
+Using Homebrew:
+```bash
+brew install postgresql@17
+brew services start postgresql@17
+```
+
+#### Linux (Ubuntu/Debian)
+```bash
+sudo apt update
+sudo apt install postgresql postgresql-contrib
+sudo systemctl start postgresql
+sudo systemctl enable postgresql
+```
+
+### Verifying Installation
+
+1. Check PostgreSQL service status:
+   - Windows:
+     * Using PowerShell (recommended): `powershell -Command "Get-Service postgresql* | Select-Object Name, Status"`
+     * Using UI: Open Services (Win + R, type `services.msc`) and look for "postgresql"
+   - macOS: `brew services list`
+   - Linux: `sudo systemctl status postgresql`
+
+2. Start the service if its not already running:
+    - Windows:
+      * Using PowerShell (recommended): `Start-Service postgresql-x64-17`
+      * Using UI: Use step above to find in Services and right click to select Start.
+      * You can set the service to start automatically with Windows either through the Services UI (right click, select Properties, and change Startup Type) or by running `Set-Service postgresql-x64-17 -StartupType Automatic`
+
+3. Connect to PostgreSQL:
+```bash
+psql -U postgres
+```
+
+### Creating a Test Database
+
+1. Connect as postgres user:
+```bash
+psql -U postgres
+```
+
+2. Create test database:
+```sql
+CREATE DATABASE testdb;
+\c testdb
+CREATE TABLE test (id SERIAL PRIMARY KEY, name TEXT);
+INSERT INTO test (name) VALUES ('test data');
+```
+
+3. Test connection string for MCP server:
+```
+postgresql://postgres:your_password@localhost:5432/testdb
+```
+
+### Troubleshooting
+
+1. Connection refused:
+   - Check PostgreSQL service status: see [Verifying Installation](#verifying-installation)
+   - Verify port availability:
+     * Windows: `netstat -ano | findstr :5432`
+     * macOS/Linux: `lsof -i :5432`
+   - Check connection permissions in pg_hba.conf:
+     * Windows: `%PROGRAMFILES%\PostgreSQL\[version]\data\pg_hba.conf`
+     * macOS: `/opt/homebrew/var/postgresql@17/pg_hba.conf`
+     * Linux: `/etc/postgresql/[version]/main/pg_hba.conf`
+     * Add/modify line: `host all all 127.0.0.1/32 scram-sha-256`
+
+2. Authentication failed
+   - Test connection with psql:
+     ```bash
+     # Basic connection test
+     psql -U postgres -h localhost
+     
+     # Full connection string test
+     psql "postgresql://postgres:your_password@localhost:5432/testdb"
+     ```
+   - Reset postgres user password:
+     * Windows:
+       ```powershell
+       # Open SQL shell as admin
+       psql -U postgres
+       # Change password
+       ALTER USER postgres WITH PASSWORD 'new_password';
+       ```
+     * Linux:
+       ```bash
+       sudo -u postgres psql
+       ALTER USER postgres WITH PASSWORD 'new_password';
+       ```
+   - Verify database exists:
+     ```sql
+     # List all databases
+     \l
+     
+     # Create database if missing
+     CREATE DATABASE testdb;
+     ```
+
+3. Port conflicts
+   - Find process using port 5432:
+     * Windows: `netstat -ano | findstr :5432`
+     * macOS/Linux: `lsof -i :5432`
+   - Change PostgreSQL port:
+     1. Edit postgresql.conf:
+        * Windows: `%PROGRAMFILES%\PostgreSQL\[version]\data\postgresql.conf`
+        * macOS: `/opt/homebrew/var/postgresql@17/postgresql.conf`
+        * Linux: `/etc/postgresql/[version]/main/postgresql.conf`
+     2. Modify line: `port = 5433` (or another available port)
+     3. Restart PostgreSQL service
+     4. Update connection string to use new port
+
 ## Components
 
 ### Tools
