@@ -85,12 +85,32 @@ psql "postgresql://postgres:your_password@localhost:5432/testdb" -c "CREATE TABL
 psql "postgresql://postgres:your_password@localhost:5432/testdb" -c "SELECT * FROM test;"
 ```
 
-2. Test connection string for MCP server:
-```
-postgresql://postgres:your_password@localhost:5432/testdb
+2. Create a dedicated user for MCP server (replace `your_password` with postgres superuser password):
+```bash
+# Create read-only user and grant database access
+psql "postgresql://postgres:your_password@localhost:5432" -c "CREATE USER mcp_user WITH PASSWORD 'mcp_password'; GRANT CONNECT ON DATABASE testdb TO mcp_user;"
+
+# Grant schema permissions (run this on the testdb database)
+psql "postgresql://postgres:your_password@localhost:5432/testdb" -c "GRANT USAGE ON SCHEMA public TO mcp_user; GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_user; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mcp_user;"
 ```
 
-Note: Using the connection string approach avoids interactive password prompts and is more suitable for scripting and automation.
+3. Test the read-only user:
+```bash
+# Test SELECT permission (should work)
+psql "postgresql://mcp_user:mcp_password@localhost:5432/testdb" -c "SELECT * FROM test;"
+
+# Test INSERT permission (should fail with "permission denied")
+psql "postgresql://mcp_user:mcp_password@localhost:5432/testdb" -c "INSERT INTO test (name) VALUES ('test');"
+```
+
+4. Connection string for MCP server (using the read-only user):
+```
+postgresql://mcp_user:mcp_password@localhost:5432/testdb
+```
+
+Note: 
+- Using the connection string approach avoids interactive password prompts and is more suitable for scripting and automation
+- Using a dedicated read-only user follows security best practices and the principle of least privilege
 
 ### Troubleshooting
 
@@ -172,7 +192,7 @@ To use this server with the Claude Desktop app, add the following configuration 
         "-i", 
         "--rm", 
         "mcp/postgres", 
-        "postgresql://host.docker.internal:5432/mydb"]
+        "postgresql://mcp_user:mcp_password@host.docker.internal:5432/testdb"]
     }
   }
 }
@@ -188,14 +208,14 @@ To use this server with the Claude Desktop app, add the following configuration 
       "args": [
         "-y",
         "@modelcontextprotocol/server-postgres",
-        "postgresql://localhost/mydb"
+        "postgresql://mcp_user:mcp_password@localhost:5432/testdb"
       ]
     }
   }
 }
 ```
 
-Replace `/mydb` with your database name.
+Replace the connection string with your read-only user credentials and database name.
 
 ## Building
 
