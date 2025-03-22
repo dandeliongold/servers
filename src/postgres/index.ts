@@ -23,13 +23,15 @@ const server = new Server(
   },
 );
 
-const args = process.argv.slice(2);
-if (args.length === 0) {
-  console.error("Please provide a database URL as a command-line argument");
+// Check for required environment variable
+const MCP_USER_PASSWORD = process.env.MCP_USER_PASSWORD!;
+if (!MCP_USER_PASSWORD) {
+  console.error("Error: MCP_USER_PASSWORD environment variable is required");
   process.exit(1);
 }
 
-const databaseUrl = args[0];
+// Construct database URL using environment variable
+const databaseUrl = `postgresql://mcp_user:${MCP_USER_PASSWORD}@localhost:5432/postgres`;
 
 const resourceBaseUrl = new URL(databaseUrl);
 resourceBaseUrl.protocol = "postgres:";
