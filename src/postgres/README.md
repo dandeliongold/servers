@@ -15,6 +15,23 @@ A Model Context Protocol server that provides read-only access to PostgreSQL dat
    - Set port (default: 5432)
    - Choose locale
 
+3. Add PostgreSQL to your PATH:
+   - Automatic (during installation):
+     * Make sure to check "Add PostgreSQL to the PATH" during installation
+   - Manual (after installation):
+     * First, find your PostgreSQL installation path:
+       ```powershell
+       Get-ChildItem 'C:\Program Files\PostgreSQL' -ErrorAction SilentlyContinue
+       ```
+       This will show your PostgreSQL version folder (e.g., "17")
+     * Right-click on Start → System
+     * Click "Advanced system settings"
+     * Click "Environment Variables" button at the bottom
+     * Under "System Variables", find and select "Path"
+     * Click "Edit" and add your path, eg: `C:\Program Files\PostgreSQL\17\bin`
+     * Click "OK" on all windows
+     * Restart any open Command Prompt/PowerShell windows for this to take effect.
+
 How to interact directly with PostgreSQL on Windows:
 - Use Command Prompt/PowerShell with `psql`
 - Admin UI is called pgAdmin (included in installation)
@@ -49,14 +66,14 @@ sudo systemctl enable postgresql
       * Using UI: Use step above to find in Services and right click to select Start.
       * You can set the service to start automatically with Windows either through the Services UI (right click, select Properties, and change Startup Type) or by running `Set-Service postgresql-x64-17 -StartupType Automatic`
 
-3. Connect to PostgreSQL:
+3. Connect to PostgreSQL with your root user (will ask for password):
 ```bash
 psql -U postgres
 ```
 
 ### Creating a Test Database
 
-1. Connect as postgres user:
+1. Connect as postgres root user (will ask for password):
 ```bash
 psql -U postgres
 ```
