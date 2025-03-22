@@ -13,7 +13,7 @@ import pg from "pg";
 const server = new Server(
   {
     name: "example-servers/postgres",
-    version: "0.1.0",
+    version: "0.6.2",
   },
   {
     capabilities: {
@@ -23,15 +23,18 @@ const server = new Server(
   },
 );
 
-// Check for required environment variable
-const MCP_USER_PASSWORD = process.env.MCP_USER_PASSWORD!;
-if (!MCP_USER_PASSWORD) {
-  console.error("Error: MCP_USER_PASSWORD environment variable is required");
+// Check for connection configuration
+const CONNECTION_STRING = process.env.CONNECTION_STRING;
+const MCP_USER = process.env.MCP_USER || 'mcp_user';
+const MCP_USER_PASSWORD = process.env.MCP_USER_PASSWORD;
+
+if (!CONNECTION_STRING && !MCP_USER_PASSWORD) {
+  console.error("Error: Either CONNECTION_STRING or MCP_USER_PASSWORD environment variable is required");
   process.exit(1);
 }
 
-// Construct database URL using environment variable
-const databaseUrl = `postgresql://mcp_user:${MCP_USER_PASSWORD}@localhost:5432/postgres`;
+// Use provided connection string or construct one with configured user
+const databaseUrl = CONNECTION_STRING || `postgresql://${MCP_USER}:${MCP_USER_PASSWORD}@localhost:5432/postgres`;
 
 const resourceBaseUrl = new URL(databaseUrl);
 resourceBaseUrl.protocol = "postgres:";
@@ -62,34 +65,87 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
 });
 
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-  const resourceUrl = new URL(request.params.uri);
-
-  const pathComponents = resourceUrl.pathname.split("/");
-  const schema = pathComponents.pop();
-  const tableName = pathComponents.pop();
-
-  if (schema !== SCHEMA_PATH) {
-    throw new Error("Invalid resource URI");
-  }
-
-  const client = await pool.connect();
   try {
-    const result = await client.query(
-      "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = $1",
-      [tableName],
-    );
+    // Validate and parse resource URI
+    let resourceUrl: URL;
+    try {
+      resourceUrl = new URL(request.params.uri);
+      if (resourceUrl.protocol !== 'postgres:') {
+        throw new Error('Invalid protocol - must be postgres://');
+      }
+    } catch (error: any) {
+      throw new Error(`Invalid resource URI format: ${error?.message || 'Invalid URI'}`);
+    }
 
-    return {
-      contents: [
-        {
-          uri: request.params.uri,
-          mimeType: "application/json",
-          text: JSON.stringify(result.rows, null, 2),
-        },
-      ],
-    };
-  } finally {
-    client.release();
+    // Extract and validate path components
+    const pathComponents = resourceUrl.pathname.split("/").filter(Boolean);
+    if (pathComponents.length !== 2) {
+      throw new Error('Invalid resource path - expected format: table_name/schema');
+    }
+
+    const [tableName, schema] = pathComponents;
+    if (!tableName) {
+      throw new Error('Table name is required');
+    }
+    if (schema !== SCHEMA_PATH) {
+      throw new Error(`Invalid schema path - expected '${SCHEMA_PATH}'`);
+    }
+
+    // Connect to database with timeout
+    const client = await Promise.race([
+      pool.connect(),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Database connection timeout')), 5000)
+      )
+    ]) as pg.PoolClient;
+
+    try {
+      // First check if table exists
+      const tableCheck = await client.query(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1)",
+        [tableName]
+      );
+
+      if (!tableCheck.rows[0].exists) {
+        throw new Error(`Table '${tableName}' not found`);
+      }
+
+      // Get column information
+      const result = await client.query(
+        "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_name = $1",
+        [tableName]
+      );
+
+      if (result.rows.length === 0) {
+        throw new Error(`No columns found for table '${tableName}'`);
+      }
+
+      return {
+        contents: [
+          {
+            uri: request.params.uri,
+            mimeType: "application/json",
+            text: JSON.stringify({
+              table: tableName,
+              columns: result.rows,
+              timestamp: new Date().toISOString()
+            }, null, 2),
+          },
+        ],
+      };
+    } finally {
+      client.release();
+    }
+  } catch (error: any) {
+    // Convert all errors to a standardized format
+    const errorMessage = error?.message || 'Unknown error occurred';
+    const errorCode = error?.code || 'UNKNOWN_ERROR';
+    
+    throw new Error(JSON.stringify({
+      error: errorMessage,
+      code: errorCode,
+      timestamp: new Date().toISOString()
+    }));
   }
 });
 
