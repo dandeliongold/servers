@@ -1,5 +1,9 @@
-import { jest, describe, test, expect, beforeEach, afterEach } from '@jest/globals';
+import { jest, describe, test, expect, afterEach } from '@jest/globals';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { setup } from './setup.js';
+
+// Set up test environment
+setup();
 
 // Define mock pool type
 interface MockPool extends pg.Pool {
@@ -25,34 +29,6 @@ jest.mock('pg', () => ({
 import pg from 'pg';
 
 describe('Postgres Server', () => {
-  const originalArgv = process.argv;
-
-  beforeEach(() => {
-    // Clear all mocks and modules
-    jest.clearAllMocks();
-    jest.resetModules();
-    
-    // Reset process.argv
-    process.argv = [...originalArgv];
-    
-    // Clear environment variables
-    delete process.env.CONNECTION_STRING;
-    delete process.env.MCP_DB_USER;
-    delete process.env.MCP_DB_PASSWORD;
-    delete process.env.MCP_DB_HOST;
-    delete process.env.MCP_DB_PORT;
-    delete process.env.MCP_DB_NAME;
-    delete process.env.MCP_DB_SSL_MODE;
-    delete process.env.MCP_DB_SSL_CERT;
-    delete process.env.MCP_DB_SSL_KEY;
-    delete process.env.MCP_DB_SSL_ROOT_CERT;
-    delete process.env.MCP_DB_SSL_PASSPHRASE;
-    delete process.env.MCP_DB_SSL_REJECT_UNAUTHORIZED;
-    delete process.env.MCP_DB_MAX_CONNECTIONS;
-    delete process.env.MCP_DB_IDLE_TIMEOUT;
-    delete process.env.MCP_DB_CONNECTION_TIMEOUT;
-    delete process.env.MCP_DB_APPLICATION_NAME;
-  });
 
   afterEach(async () => {
     // Clean up after each test
