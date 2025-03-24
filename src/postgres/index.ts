@@ -9,11 +9,34 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import pg from "pg";
+import dotenv from "dotenv";
 
 export let server: Server | undefined;
 export let pool: pg.Pool | undefined;
 
 export function initializeServer() {
+  interface Arguments {
+    'env-file'?: string;
+    'db-name': string;
+    _: (string | number)[];
+  }
+
+  // Check for env file argument
+  const envFileArg = process.argv.indexOf('--env-file');
+  if (envFileArg !== -1) {
+    const envFile = process.argv[envFileArg + 1];
+    const result = dotenv.config({ path: envFile });
+    if (result.error) {
+      console.error(`Error loading .env file: ${result.error.message}`);
+      process.exit(1);
+    }
+  }
+
+  // Get database name from command line args if provided
+  const dbNameArg = process.argv.indexOf('--db-name');
+  const dbName = dbNameArg !== -1 ? process.argv[dbNameArg + 1] : 'default';
+  const namePrefix = dbName === 'default' ? '' : `${dbName}.`;
+
   server = new Server(
     {
       name: "example-servers/postgres",
@@ -24,30 +47,105 @@ export function initializeServer() {
         resources: {},
         tools: {},
       },
-    },
+    }
   );
 
-  // Check for connection configuration
-  const CONNECTION_STRING = process.env.CONNECTION_STRING;
-  const MCP_USER = process.env.MCP_USER || 'mcp_user';
-  const MCP_USER_PASSWORD = process.env.MCP_USER_PASSWORD;
+  // Initialize pool configuration
+  const poolConfig: pg.PoolConfig = {};
 
-  if (!CONNECTION_STRING && !MCP_USER_PASSWORD) {
-    console.error("Error: Either CONNECTION_STRING or MCP_USER_PASSWORD environment variable is required");
-    process.exit(1);
+  // Check for connection string (last argument that's not a flag or flag value)
+  const connectionArg = process.argv[process.argv.length - 1];
+  const isConnectionString = connectionArg && !connectionArg.startsWith('-') && 
+    process.argv[process.argv.length - 2] !== '--db-name';
+
+  if (isConnectionString) {
+    poolConfig.connectionString = connectionArg;
+  } else {
+    // Basic connection settings
+    poolConfig.user = process.env.MCP_DB_USER || 'mcp_user';
+    poolConfig.password = process.env.MCP_DB_PASSWORD;
+    poolConfig.host = process.env.MCP_DB_HOST || 'localhost';
+    poolConfig.port = process.env.MCP_DB_PORT ? parseInt(process.env.MCP_DB_PORT) : 5432;
+    poolConfig.database = process.env.MCP_DB_NAME || (dbName === 'default' ? 'postgres' : dbName);
+
+    if (!poolConfig.password) {
+      console.error("Error: MCP_DB_PASSWORD environment variable is required when not using connection string");
+      process.exit(1);
+    }
+
+    // Pool configuration
+    if (process.env.MCP_DB_MAX_CONNECTIONS) {
+      poolConfig.max = parseInt(process.env.MCP_DB_MAX_CONNECTIONS);
+    }
+    if (process.env.MCP_DB_IDLE_TIMEOUT) {
+      poolConfig.idleTimeoutMillis = parseInt(process.env.MCP_DB_IDLE_TIMEOUT);
+    }
+    if (process.env.MCP_DB_CONNECTION_TIMEOUT) {
+      poolConfig.connectionTimeoutMillis = parseInt(process.env.MCP_DB_CONNECTION_TIMEOUT);
+    }
+    if (process.env.MCP_DB_APPLICATION_NAME) {
+      poolConfig.application_name = process.env.MCP_DB_APPLICATION_NAME;
+    }
+
+    // SSL configuration
+    if (process.env.MCP_DB_SSL_MODE) {
+      poolConfig.ssl = {
+        sslmode: process.env.MCP_DB_SSL_MODE,
+        sslcert: process.env.MCP_DB_SSL_CERT,
+        sslkey: process.env.MCP_DB_SSL_KEY,
+        sslca: process.env.MCP_DB_SSL_ROOT_CERT,
+        passphrase: process.env.MCP_DB_SSL_PASSPHRASE,
+        rejectUnauthorized: process.env.MCP_DB_SSL_REJECT_UNAUTHORIZED === 'true'
+      } as any; // Type assertion needed for pg-specific SSL properties
+    }
   }
 
-  // Use provided connection string or construct one with configured user
-  const databaseUrl = CONNECTION_STRING || `postgresql://${MCP_USER}:${MCP_USER_PASSWORD}@localhost:5432/postgres`;
+  // Create the pool first to validate configuration
+  pool = new pg.Pool(poolConfig);
 
   // Initialize resourceBaseUrl for use in handlers
-  const resourceBaseUrl = new URL(databaseUrl);
+  let resourceBaseUrl: URL;
+  try {
+    if (connectionArg) {
+      // For connection string, ensure it has the correct protocol
+      const urlStr = connectionArg.startsWith('postgresql://') 
+        ? connectionArg 
+        : `postgresql://${connectionArg.replace(/^postgres(ql)?:\/\//, '')}`;
+      resourceBaseUrl = new URL(urlStr);
+    } else {
+      // Build URL from the pool configuration
+      const user = poolConfig.user || '';
+      const password = typeof poolConfig.password === 'function' 
+        ? poolConfig.password() 
+        : (poolConfig.password || '');
+      const userInfo = `${encodeURIComponent(user)}:${encodeURIComponent(String(password))}`;
+      const url = `postgresql://${userInfo}@${poolConfig.host}:${poolConfig.port}/${poolConfig.database}`;
+      resourceBaseUrl = new URL(url);
+    }
+  } catch (error: any) {
+    // If URL construction fails, try a more lenient approach for connection string
+    if (connectionArg) {
+      try {
+        const [credentials, hostPart] = connectionArg.split('@');
+        const [user, pass] = credentials.replace(/^postgres(ql)?:\/\//, '').split(':');
+        const [host, database] = hostPart.split('/');
+        resourceBaseUrl = new URL(`postgresql://${user}:${pass}@${host}/${database}`);
+      } catch (e) {
+        throw new Error(`Invalid connection string format: ${error.message}`);
+      }
+    } else {
+      throw error;
+    }
+  }
+
+  // Standardize protocol and clear sensitive info
   resourceBaseUrl.protocol = "postgres:";
   resourceBaseUrl.password = "";
-
-  pool = new pg.Pool({
-    connectionString: databaseUrl,
-  });
+  
+  // Add database name to hostname if specified
+  if (dbName !== 'default') {
+    resourceBaseUrl.hostname = `${dbName}.${resourceBaseUrl.hostname}`;
+  }
 
   const SCHEMA_PATH = "schema";
 
@@ -56,13 +154,13 @@ export function initializeServer() {
     const client = await pool!.connect();
     try {
       const result = await client.query(
-        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'",
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
       );
       return {
         resources: result.rows.map((row) => ({
           uri: new URL(`${row.table_name}/${SCHEMA_PATH}`, resourceBaseUrl).href,
           mimeType: "application/json",
-          name: `"${row.table_name}" database schema`,
+          name: `"${row.table_name}" database schema (${dbName})`,
         })),
       };
     } finally {
@@ -133,6 +231,7 @@ export function initializeServer() {
               mimeType: "application/json",
               text: JSON.stringify({
                 table: tableName,
+                database: dbName,
                 columns: result.rows,
                 timestamp: new Date().toISOString()
               }, null, 2),
@@ -159,8 +258,8 @@ export function initializeServer() {
     return {
       tools: [
         {
-          name: "query",
-          description: "Run a read-only SQL query",
+          name: `${namePrefix}query`,
+          description: `Run a read-only SQL query on the ${dbName} database`,
           inputSchema: {
             type: "object",
             properties: {
@@ -173,7 +272,8 @@ export function initializeServer() {
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    if (request.params.name === "query") {
+    const expectedToolName = `${namePrefix}query`;
+    if (request.params.name === expectedToolName) {
       const sql = request.params.arguments?.sql as string;
 
       const client = await pool!.connect();
@@ -181,7 +281,14 @@ export function initializeServer() {
         await client.query("BEGIN TRANSACTION READ ONLY");
         const result = await client.query(sql);
         return {
-          content: [{ type: "text", text: JSON.stringify(result.rows, null, 2) }],
+          content: [{ 
+            type: "text", 
+            text: JSON.stringify({
+              database: dbName,
+              rows: result.rows,
+              timestamp: new Date().toISOString()
+            }, null, 2) 
+          }],
           isError: false,
         };
       } catch (error) {
@@ -190,7 +297,7 @@ export function initializeServer() {
         client
           .query("ROLLBACK")
           .catch((error) =>
-            console.warn("Could not roll back transaction:", error),
+            console.warn("Could not roll back transaction:", error)
           );
 
         client.release();
