@@ -95,6 +95,110 @@ describe('Postgres Server', () => {
     });
   });
 
+  describe('Configuration', () => {
+    test('loads configuration from env file', async () => {
+      // Mock dotenv to actually set environment variables
+      jest.mock('dotenv', () => ({
+        config: jest.fn().mockImplementation(() => {
+          process.env.MCP_DB_USER = 'env_user';
+          process.env.MCP_DB_PASSWORD = 'env_pass';
+          process.env.MCP_DB_HOST = 'env.host';
+          process.env.MCP_DB_PORT = '5434';
+          return { error: null };
+        })
+      }));
+
+      // Add env file argument
+      process.argv.push('--env-file', '/path/to/.env');
+      
+      const { initializeServer } = await import('../index.js');
+      const { pool } = initializeServer() as { server: Server, pool: MockPool };
+
+      // Verify pool configuration from env file
+      const config = pool!.getConfig();
+      expect(config.user).toBe('env_user');
+      expect(config.password).toBe('env_pass');
+      expect(config.host).toBe('env.host');
+      expect(config.port).toBe(5434);
+    });
+
+    test('handles missing env file gracefully', async () => {
+      // Mock fs to throw error
+      jest.mock('fs', () => ({
+        readFileSync: jest.fn().mockImplementation(() => {
+          throw new Error('File not found');
+        })
+      }));
+
+      // Mock console.error and process.exit
+      const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      const mockConsoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      // Add env file argument
+      process.argv.push('--env-file', '/path/to/nonexistent/.env');
+      
+      const { initializeServer } = await import('../index.js');
+      
+      try {
+        initializeServer();
+        
+        expect(mockConsoleError).toHaveBeenCalledWith(expect.stringContaining('Error loading .env file'));
+        expect(mockExit).toHaveBeenCalledWith(1);
+      } finally {
+        mockExit.mockRestore();
+        mockConsoleError.mockRestore();
+      }
+    });
+
+    test('handles different connection string formats', async () => {
+      const testCases = [
+        'postgresql://user:pass@host:5432/db',
+        'postgres://user:pass@host:5432/db'
+      ];
+
+      for (const connectionString of testCases) {
+        // Reset modules for each test case
+        jest.resetModules();
+        
+        // Add connection string to argv
+        process.argv.push(connectionString);
+        
+        const { initializeServer } = await import('../index.js');
+        const { pool } = initializeServer() as { server: Server, pool: MockPool };
+
+        // Verify pool configuration
+        expect(pool!.getConfig().connectionString).toBe(connectionString);
+        
+        // Clean up argv
+        process.argv.pop();
+      }
+    });
+
+    test('handles malformed connection string', async () => {
+      // Use a connection string that will fail both parsing attempts
+      process.argv.push('invalid:///');
+      
+      const { initializeServer } = await import('../index.js');
+      
+      expect(() => initializeServer()).toThrow();
+    });
+
+    test('uses default values when optional configs not provided', async () => {
+      // Only set required password
+      process.env.MCP_DB_PASSWORD = 'test_pass';
+      
+      const { initializeServer } = await import('../index.js');
+      const { pool } = initializeServer() as { server: Server, pool: MockPool };
+
+      // Verify default values
+      const config = pool!.getConfig();
+      expect(config.user).toBe('mcp_user');
+      expect(config.host).toBe('localhost');
+      expect(config.port).toBe(5432);
+      expect(config.database).toBe('postgres');
+    });
+  });
+
   test('initializes with connection pool config', async () => {
     // Set up environment
     process.env.MCP_DB_PASSWORD = 'test_pass';
